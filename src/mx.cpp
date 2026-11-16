@@ -74,7 +74,7 @@ void free_unified(void* p) {
 }
 
 int gemm(MatrixView C, MatrixView A, MatrixView B, const GemmOptions& opt) {
-  GemmDesc d{C, A, B, opt.alpha, opt.beta};
+  GemmDesc d{C, A, B, opt.alpha, opt.beta, opt.threads};
   BackendId id = opt.backend == BackendId::Auto ? plan_single(d) : opt.backend;
   Backend* b = get_backend(id);
   if (!b || !b->supports(d) || !b->available()) return 3;  // requested engine can't do this

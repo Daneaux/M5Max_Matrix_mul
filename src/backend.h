@@ -7,6 +7,7 @@ namespace mx {
 struct GemmDesc {
   MatrixView C, A, B;
   float alpha, beta;
+  int threads = 0;  // see GemmOptions::threads
   size_t m() const { return C.rows; }
   size_t n() const { return C.cols; }
   size_t k() const { return A.cols; }

@@ -209,8 +209,11 @@ class SmeBackend final : public Backend {
     const size_t kc_max = std::min(kKC, d.k()), nc_max = std::min(kNC, d.n());  // size buffers to the problem
     j.Bp.resize((nc_max + kBlk - 1) / kBlk * kc_max * kBlk);
 
-    // ~1 thread per 40 MFLOP: dispatch + sync costs more than tiny jobs are worth.
-    const size_t nt = std::min({env_threads(), j.nslabs_m, static_cast<size_t>(std::max(1.0, d.flops() / 4e7))});
+    // Explicit d.threads wins (capped by the number of row slabs). Automatic: env/default, and about
+    // 1 thread per 40 MFLOP since dispatch + sync costs more than tiny jobs are worth.
+    const size_t nt = d.threads > 0
+        ? std::min(static_cast<size_t>(d.threads), j.nslabs_m)
+        : std::min({env_threads(), j.nslabs_m, static_cast<size_t>(std::max(1.0, d.flops() / 4e7))});
     dispatch_queue_t q = dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0);
     auto run = [&](void (*fn)(void*, size_t)) {
       j.next = 0;

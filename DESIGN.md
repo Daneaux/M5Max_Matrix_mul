@@ -123,6 +123,16 @@ Same experiment as 3d on the GPU: one command buffer of L dependent `matmul2d` d
 
 The GPU FP16 path is ~2-4x faster than the ANE even in the noisy runs; GPU FP32 is about level with ANE FP16. Re-measure on an idle machine after a cooldown before quoting precise figures; the ANE numbers were single runs and may carry the same noise.
 
+## 3f. Scaling with hardware used (`make scaling`, `bench/bench_scaling.mm`)
+
+You cannot pin work to specific cores on any engine. CPU: `GemmOptions::threads` (SME backend, 0 = auto) sets the worker-thread count; the OS places threads. GPU: each threadgroup runs on one core, so the number of launched threadgroups T bounds the cores used. Measured on a busy machine (load average 5-7), so rough.
+
+**CPU, SME FP32, n=4096:** 1 thread 1.35 TFLOP/s; 2: 1.86; 3: 2.32; 4: 2.40; 6: 2.36; 18: 2.45. Throughput saturates at ~2.4 TFLOP/s (1.8x) by 3-5 threads; the 12 Performance cores (threads beyond 6) add nothing. Cause not determined (shared SME unit vs memory vs OS placement). The automatic default of 6 threads is more than needed; 3-4 gives the same result.
+
+**GPU, one 64x64 tile per threadgroup, K=8192, M5 Max (40 cores):**
+- Shared cache-resident inputs (compute-bound), FP16: 0.72 TFLOP/s for one threadgroup, linear to 16 (16x), peak ~63 TFLOP/s at T=160 (87x). FP32: 0.30 for one, linear to 16, peak ~14 at T=160. The GPU needs several threadgroups per core (~100-160 total) to fill; launching only 40 does not. Odd non-monotonic dips (FP32 at T=20 and 40) are unexplained; other GPU users (display, other apps) are a guess.
+- Unique B per threadgroup (streams DRAM): FP16 plateaus at ~33 TFLOP/s (~500 GB/s of B traffic, the measured bandwidth ceiling), FP32 at ~13.5. Low-reuse shapes are memory-bound, not compute-bound.
+
 ## 4. Roadmap
 
 1. **M0 (this skeleton)**: API, reference backend, stubs, Makefile, test, bench.

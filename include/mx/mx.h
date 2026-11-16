@@ -19,6 +19,7 @@ struct MatrixView {
 struct GemmOptions {
   BackendId backend = BackendId::Auto;  // Auto = planner picks / splits
   float alpha = 1.f, beta = 0.f;
+  int threads = 0;  // CPU (SME) backend: worker thread count, 0 = automatic. Other backends ignore it.
 };
 
 // Page-aligned unified-memory allocation, shareable zero-copy with Metal/CoreML.
