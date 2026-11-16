@@ -36,6 +36,9 @@ build/bench_gpu_resident: bench/bench_gpu_resident.mm
 build/bench_scaling: bench/bench_scaling.mm build/libmx.a
 	$(CXX) $(CXXFLAGS) -x objective-c++ -fobjc-arc $< -x none build/libmx.a $(FRAMEWORKS) -o $@
 
+build/prof_threadgroups: bench/prof_threadgroups.mm
+	$(CXX) $(CXXFLAGS) -x objective-c++ -fobjc-arc $< $(FRAMEWORKS) -o $@
+
 test: build/test_gemm
 	./build/test_gemm
 bench: build/bench_gemm

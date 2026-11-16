@@ -133,6 +133,10 @@ You cannot pin work to specific cores on any engine. CPU: `GemmOptions::threads`
 - Shared cache-resident inputs (compute-bound), FP16: 0.72 TFLOP/s for one threadgroup, linear to 16 (16x), peak ~63 TFLOP/s at T=160 (87x). FP32: 0.30 for one, linear to 16, peak ~14 at T=160. The GPU needs several threadgroups per core (~100-160 total) to fill; launching only 40 does not. Odd non-monotonic dips (FP32 at T=20 and 40) are unexplained; other GPU users (display, other apps) are a guess.
 - Unique B per threadgroup (streams DRAM): FP16 plateaus at ~33 TFLOP/s (~500 GB/s of B traffic, the measured bandwidth ceiling), FP32 at ~13.5. Low-reuse shapes are memory-bound, not compute-bound.
 
+### 3f-ii. Why more than 40 threadgroups helps (hypothesis, not yet verified)
+
+Each threadgroup (128 threads here) is not a whole core's worth of work: a core stalls on memory loads and instruction latency, and keeps several resident threadgroups/simdgroups to switch between (latency hiding). Apple's WWDC22 Metal compute talk suggests ~1-2K concurrent threads per shader core, i.e. ~8-16 of our threadgroups per core, limited by registers and threadgroup memory. Our data fits roughly 4 per core (peak per-core rate ~2.2x the single-threadgroup rate). Not confirmed: `xctrace` with Metal GPU Counters records only "RT Unit Active" (no occupancy, no selectable counters), so `bench/prof_threadgroups.mm` writes Xcode GPU captures (`MTL_CAPTURE_ENABLED=1 ./build/prof_threadgroups T 0 out.gputrace`, saved under the git-ignored `profiles/`) to read Occupancy / ALU utilization in Xcode's Performance view at T=16/40/160. Results of that comparison are not recorded here yet.
+
 ## 4. Roadmap
 
 1. **M0 (this skeleton)**: API, reference backend, stubs, Makefile, test, bench.
