@@ -109,6 +109,20 @@ One Core ML model chains L matmuls (X1 = A.A, X_L = X_{L-1}.A), so one predictio
 
 So the ANE's compute rate (10-18 TFLOP/s) is 3-5x the end-to-end rate in 3b; at n=4096 about half of a single call is load/copy/Core ML overhead. The GPU FP16 path (~41 TFLOP/s) is still faster, but that number was not measured with a chained/resident test, so the comparison is not apples to apples. We cannot observe whether the ANE re-reads A from DRAM between layers; the drop in TFLOP/s at large n suggests memory limits it there.
 
+## 3e. GPU matmul speed with the matrix already resident (`make gpu-resident`, `bench/bench_gpu_resident.mm`)
+
+Same experiment as 3d on the GPU: one command buffer of L dependent `matmul2d` dispatches (X1 = A.A, X_L = X_{L-1}.A, two ping-pong buffers, A in one buffer), GPU-timestamp timing, permutation-matrix correctness check. The `@L=10` / `@L=100` columns (time / L) give burst vs sustained rate; the fitted t0 goes negative at large n because per-matmul time grows with L.
+
+**Run-to-run variance is large** (up to ~1.5-2x) on this machine, which had load average 4-7 from other processes and was running repeated benchmarks; no thermal warning was recorded. Ranges over four runs, TFLOP/s per matmul, n = 1024..4096:
+
+| Engine | Range | Best run |
+|---|---|---|
+| GPU FP16 | ~24-59 | ~59 (n=2048) |
+| GPU FP32 | ~7-11 | ~13 |
+| ANE FP16 (3d, single run) | 10-18 | 17.7 |
+
+The GPU FP16 path is ~2-4x faster than the ANE even in the noisy runs; GPU FP32 is about level with ANE FP16. Re-measure on an idle machine after a cooldown before quoting precise figures; the ANE numbers were single runs and may carry the same noise.
+
 ## 4. Roadmap
 
 1. **M0 (this skeleton)**: API, reference backend, stubs, Makefile, test, bench.

@@ -6,7 +6,7 @@ SRC_CPP  := src/mx.cpp src/backend_ref.cpp src/backend_sme.cpp
 SRC_MM   := src/backend_gpu.mm src/backend_ane.mm
 OBJ      := $(patsubst src/%.cpp,build/%.o,$(SRC_CPP)) $(patsubst src/%.mm,build/%.o,$(SRC_MM))
 
-.PHONY: all test bench bandwidth ane-resident clean
+.PHONY: all test bench bandwidth ane-resident gpu-resident clean
 all: build/libmx.a
 
 build/%.o: src/%.cpp src/backend.h include/mx/mx.h
@@ -30,6 +30,9 @@ build/bench_bandwidth: bench/bench_bandwidth.mm build/libmx.a
 build/bench_ane_resident: bench/bench_ane_resident.mm
 	$(CXX) $(CXXFLAGS) -x objective-c++ -fobjc-arc $< $(FRAMEWORKS) -o $@
 
+build/bench_gpu_resident: bench/bench_gpu_resident.mm
+	$(CXX) $(CXXFLAGS) -x objective-c++ -fobjc-arc $< $(FRAMEWORKS) -o $@
+
 test: build/test_gemm
 	./build/test_gemm
 bench: build/bench_gemm
@@ -38,5 +41,7 @@ bandwidth: build/bench_bandwidth
 	./build/bench_bandwidth
 ane-resident: build/bench_ane_resident
 	./build/bench_ane_resident
+gpu-resident: build/bench_gpu_resident
+	./build/bench_gpu_resident
 clean:
 	rm -rf build
