@@ -81,6 +81,20 @@ Engines write disjoint tiles of C, so no cross-engine synchronization is needed 
 
 Takeaways: CPU (Accelerate/SME) wins below ~500; the GPU wins above ~600 and its FP16 path is ~3x its FP32 path (consistent with, but not proof of, use of the M5 GPU matrix accelerators). The ANE is the slowest engine at every size in this setup (peaks ~3-4.6 TFLOP/s) and has ~0.25 ms fixed cost; its value is power efficiency and running concurrently with the CPU/GPU, which the planner does not exploit yet. GPU numbers use zero-copy memory; with plain heap memory (`MX_BENCH_HEAP=1`) the GPU pays for staging copies.
 
+## 3c. Memory bandwidth (`make bandwidth`, `bench/bench_bandwidth.mm`)
+
+All engines share one DRAM pool but get very different shares of it (1 GB working set, GB/s; copy counts read+write):
+
+| Engine | Read | Write | Copy |
+|---|---|---|---|
+| CPU, 1 thread | 70 | 121 | 120 |
+| CPU, 6 Super cores | 208 | 282 | 272 |
+| CPU, all 18 threads | 266 | 278 | 354 |
+| GPU (zero-copy buffers) | 473 | 466 | 437 |
+| ANE via Core ML (end to end, effective) | 3-6 | 6 | n/a |
+
+Cache-sized sets (1-16 MB) show cache bandwidth on the CPU (up to ~1.8 TB/s read, all threads), not DRAM. The ANE cannot access memory directly, so its figure is end to end through Core ML (includes Core ML's copies/conversion and some compute, and placement for those shapes was not verified): a lower bound, but 10-100x below the other engines, which is a large part of why the ANE loses on matmul here. The chip's rated peak bandwidth was not checked.
+
 ## 4. Roadmap
 
 1. **M0 (this skeleton)**: API, reference backend, stubs, Makefile, test, bench.

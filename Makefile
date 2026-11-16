@@ -6,7 +6,7 @@ SRC_CPP  := src/mx.cpp src/backend_ref.cpp src/backend_sme.cpp
 SRC_MM   := src/backend_gpu.mm src/backend_ane.mm
 OBJ      := $(patsubst src/%.cpp,build/%.o,$(SRC_CPP)) $(patsubst src/%.mm,build/%.o,$(SRC_MM))
 
-.PHONY: all test bench clean
+.PHONY: all test bench bandwidth clean
 all: build/libmx.a
 
 build/%.o: src/%.cpp src/backend.h include/mx/mx.h
@@ -24,9 +24,14 @@ build/test_gemm: tests/test_gemm.cpp build/libmx.a
 build/bench_gemm: bench/bench_gemm.cpp build/libmx.a
 	$(CXX) $(CXXFLAGS) $< build/libmx.a -framework Accelerate $(FRAMEWORKS) -o $@
 
+build/bench_bandwidth: bench/bench_bandwidth.mm build/libmx.a
+	$(CXX) $(CXXFLAGS) -x objective-c++ -fobjc-arc $< -x none build/libmx.a $(FRAMEWORKS) -o $@
+
 test: build/test_gemm
 	./build/test_gemm
 bench: build/bench_gemm
 	./build/bench_gemm
+bandwidth: build/bench_bandwidth
+	./build/bench_bandwidth
 clean:
 	rm -rf build
