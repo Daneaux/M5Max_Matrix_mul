@@ -95,6 +95,20 @@ All engines share one DRAM pool but get very different shares of it (1 GB workin
 
 Cache-sized sets (1-16 MB) show cache bandwidth on the CPU (up to ~1.8 TB/s read, all threads), not DRAM. The ANE cannot access memory directly, so its figure is end to end through Core ML (includes Core ML's copies/conversion and some compute, and placement for those shapes was not verified): a lower bound, but 10-100x below the other engines, which is a large part of why the ANE loses on matmul here. The chip's rated peak bandwidth was not checked.
 
+## 3d. ANE matmul speed with the matrix already loaded (`make ane-resident`, `bench/bench_ane_resident.mm`)
+
+One Core ML model chains L matmuls (X1 = A.A, X_L = X_{L-1}.A), so one prediction loads A once. Fitting t(L) = t0 + L*t1 separates per-multiply time (t1) from fixed per-call cost (t0). FP16, all layers confirmed on the Neural Engine via MLComputePlan, chain correctness checked with a permutation matrix.
+
+| n | t1 per matmul (ms) | t0 fixed per call (ms) | TFLOP/s |
+|---|---|---|---|
+| 256 | 0.003 | 0.20 | 11.0 |
+| 512 | 0.015 | 0.37 | 17.7 |
+| 1024 | 0.139 | 1.0 | 15.5 |
+| 2048 | 1.26 | 4.0 | 13.6 |
+| 4096 | 13.5 | 15.2 | 10.2 |
+
+So the ANE's compute rate (10-18 TFLOP/s) is 3-5x the end-to-end rate in 3b; at n=4096 about half of a single call is load/copy/Core ML overhead. The GPU FP16 path (~41 TFLOP/s) is still faster, but that number was not measured with a chained/resident test, so the comparison is not apples to apples. We cannot observe whether the ANE re-reads A from DRAM between layers; the drop in TFLOP/s at large n suggests memory limits it there.
+
 ## 4. Roadmap
 
 1. **M0 (this skeleton)**: API, reference backend, stubs, Makefile, test, bench.
