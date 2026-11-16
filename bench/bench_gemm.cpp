@@ -1,6 +1,8 @@
 // Size sweep: GFLOP/s per engine vs matrix size. CSV on stdout, progress on stderr.
 //   ./build/bench_gemm > results.csv
 //   MX_BENCH_MAX=4096 ./build/bench_gemm      (largest square size, default 4096)
+//   MX_BENCH_HEAP=1   ./build/bench_gemm      (use plain heap memory instead of mx::alloc_unified;
+//                                              the GPU then pays for staging copies)
 // Accelerate (cblas_sgemm) is included as the baseline to beat.
 #define ACCELERATE_NEW_LAPACK
 #include <Accelerate/Accelerate.h>
@@ -17,6 +19,18 @@
 using Clock = std::chrono::steady_clock;
 
 struct Shape { size_t m, n, k; };
+
+// Matrix storage: page-aligned unified memory (zero-copy for the GPU) or plain heap.
+struct Mem {
+  float* p; bool unified;
+  _Float16* h() const { return reinterpret_cast<_Float16*>(p); }  // same storage viewed as half (use 2x fewer elems)
+  Mem(size_t n, float v) : unified(!std::getenv("MX_BENCH_HEAP")) {
+    p = unified ? static_cast<float*>(mx::alloc_unified(n * sizeof(float))) : new float[n];
+    std::fill(p, p + n, v);
+  }
+  ~Mem() { if (unified) mx::free_unified(p); else delete[] p; }
+  Mem(const Mem&) = delete; Mem& operator=(const Mem&) = delete;
+};
 
 // Median seconds per call. Untimed warmup first; then repeat batches so each
 // sample lasts >= min_sample_s, and take the median of `samples` samples.
@@ -40,11 +54,11 @@ static double time_median(const std::function<void()>& fn, double min_sample_s =
   return t[t.size() / 2];
 }
 
-static void emit(const char* backend, const Shape& s, double sec) {
+static void emit(const char* backend, const Shape& s, double sec, const char* dtype = "f32") {
   double gf = 2.0 * s.m * s.n * s.k / sec / 1e9;
-  std::printf("%s,f32,%zu,%zu,%zu,%.6f,%.2f\n", backend, s.m, s.n, s.k, sec * 1e3, gf);
+  std::printf("%s,%s,%zu,%zu,%zu,%.6f,%.2f\n", backend, dtype, s.m, s.n, s.k, sec * 1e3, gf);
   std::fflush(stdout);
-  std::fprintf(stderr, "%-10s %5zux%-5zux%-5zu %10.4f ms %9.2f GFLOP/s\n", backend, s.m, s.n, s.k, sec * 1e3, gf);
+  std::fprintf(stderr, "%-10s %s %5zux%-5zux%-5zu %10.4f ms %9.2f GFLOP/s\n", backend, dtype, s.m, s.n, s.k, sec * 1e3, gf);
 }
 
 int main() {
@@ -64,13 +78,13 @@ int main() {
   const mx::BackendId engines[] = {mx::BackendId::Ref, mx::BackendId::SME, mx::BackendId::GPU, mx::BackendId::ANE};
 
   for (const Shape& s : shapes) {
-    std::vector<float> A(s.m * s.k, 0.5f), B(s.k * s.n, 0.25f), C(s.m * s.n);
-    mx::MatrixView a{A.data(), s.m, s.k, s.k}, b{B.data(), s.k, s.n, s.n}, c{C.data(), s.m, s.n, s.n};
+    Mem A(s.m * s.k, 0.5f), B(s.k * s.n, 0.25f), C(s.m * s.n, 0.f);
+    mx::MatrixView a{A.p, s.m, s.k, s.k}, b{B.p, s.k, s.n, s.n}, c{C.p, s.m, s.n, s.n};
 
     // Baseline: Accelerate.
     emit("accelerate", s, time_median([&] {
       cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)s.m, (int)s.n, (int)s.k,
-                  1.f, A.data(), (int)s.k, B.data(), (int)s.n, 0.f, C.data(), (int)s.n);
+                  1.f, A.p, (int)s.k, B.p, (int)s.n, 0.f, C.p, (int)s.n);
     }));
 
     for (mx::BackendId id : engines) {
@@ -78,6 +92,20 @@ int main() {
       mx::GemmOptions o; o.backend = id;
       if (mx::gemm(c, a, b, o) != 0) continue;  // engine unavailable / unsupported for this shape
       emit(mx::backend_name(id), s, time_median([&] { mx::gemm(c, a, b, o); }));
+    }
+  }
+
+  // FP16 pass (square sizes): only the GPU and ANE do FP16. No Accelerate baseline (no half GEMM).
+  for (const Shape& s : shapes) {
+    if (s.m != s.n || s.n != s.k) continue;
+    Mem A((s.m * s.k + 1) / 2, 0.f), B((s.k * s.n + 1) / 2, 0.f), C((s.m * s.n + 1) / 2, 0.f);  // 2 halves per float
+    for (size_t i = 0; i < s.m * s.k; ++i) A.h()[i] = _Float16(0.5f);
+    for (size_t i = 0; i < s.k * s.n; ++i) B.h()[i] = _Float16(0.25f);
+    mx::MatrixView a{A.p, s.m, s.k, s.k, mx::DType::F16}, b{B.p, s.k, s.n, s.n, mx::DType::F16}, c{C.p, s.m, s.n, s.n, mx::DType::F16};
+    for (mx::BackendId id : {mx::BackendId::GPU, mx::BackendId::ANE}) {
+      mx::GemmOptions o; o.backend = id;
+      if (mx::gemm(c, a, b, o) != 0) continue;
+      emit(mx::backend_name(id), s, time_median([&] { mx::gemm(c, a, b, o); }), "f16");
     }
   }
 }

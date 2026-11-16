@@ -25,6 +25,10 @@ class Backend {
   virtual double estimate_ns(const GemmDesc& d) const = 0;
 };
 
+// Unified-memory registry (mx.cpp): is [p, p+bytes) inside an mx::alloc_unified allocation?
+bool unified_find(const void* p, size_t bytes, const void** base, size_t* size);
+void gpu_forget(const void* base);  // backend_gpu.mm: drop cached MTLBuffer for a freed allocation
+
 Backend* get_backend(BackendId id);  // singleton per engine
 // Planner: choose one engine (later: a split plan across several).
 BackendId plan_single(const GemmDesc& d);
