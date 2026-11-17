@@ -79,7 +79,7 @@ Engines write disjoint tiles of C, so no cross-engine synchronization is needed 
 | 1420 | 2892 | 2164 | 8990 | 21652 | 1654 |
 | 3196 | 2615 | 2712 | 14332 | 40820 | 3161 |
 
-Takeaways: CPU (Accelerate/SME) wins below ~500; the GPU wins above ~600 and its FP16 path is ~3x its FP32 path (consistent with, but not proof of, use of the M5 GPU matrix accelerators). The ANE is the slowest engine at every size in this setup (peaks ~3-4.6 TFLOP/s) and has ~0.25 ms fixed cost; its value is power efficiency and running concurrently with the CPU/GPU, which the planner does not exploit yet. GPU numbers use zero-copy memory; with plain heap memory (`MX_BENCH_HEAP=1`) the GPU pays for staging copies.
+Takeaways: CPU (Accelerate/SME) wins below ~500; the GPU wins above ~600 and its FP16 path is ~3x its FP32 path (consistent with, but not proof of, use of the M5 GPU matrix accelerators). The ANE's numbers here are end to end (matrix loaded on every call), which hides its compute rate: it is slower than SME at n<=1420 but edges SME and Accelerate at n=3196 (3.2 vs 2.7 TFLOP/s), and is always far below the GPU. With the matrix already loaded (section 3d) it reaches 10-18 TFLOP/s; fixed per-call cost (Core ML dispatch, copy/convert in and out) is 98% of a call at n=256 and ~53% at n=4096. Its other value is power efficiency and running concurrently with the CPU/GPU, which the planner does not exploit yet. GPU numbers use zero-copy memory; with plain heap memory (`MX_BENCH_HEAP=1`) the GPU pays for staging copies.
 
 ## 3c. Memory bandwidth (`make bandwidth`, `bench/bench_bandwidth.mm`)
 
@@ -136,6 +136,34 @@ You cannot pin work to specific cores on any engine. CPU: `GemmOptions::threads`
 ### 3f-ii. Why more than 40 threadgroups helps (hypothesis, not yet verified)
 
 Each threadgroup (128 threads here) is not a whole core's worth of work: a core stalls on memory loads and instruction latency, and keeps several resident threadgroups/simdgroups to switch between (latency hiding). Apple's WWDC22 Metal compute talk suggests ~1-2K concurrent threads per shader core, i.e. ~8-16 of our threadgroups per core, limited by registers and threadgroup memory. Our data fits roughly 4 per core (peak per-core rate ~2.2x the single-threadgroup rate). Not confirmed: `xctrace` with Metal GPU Counters records only "RT Unit Active" (no occupancy, no selectable counters), so `bench/prof_threadgroups.mm` writes Xcode GPU captures (`MTL_CAPTURE_ENABLED=1 ./build/prof_threadgroups T 0 out.gputrace`, saved under the git-ignored `profiles/`) to read Occupancy / ALU utilization in Xcode's Performance view at T=16/40/160. Results of that comparison are not recorded here yet.
+
+## 3g. Scalar floor: hand-written loops, no SIMD (`make scalar`, `bench/bench_scalar.cpp`)
+
+Plain C++ triple loops, F32, compiled with `-fno-vectorize -fno-slp-vectorize`. `make scalar-asm` shows the hot loops use only scalar `fmadd`/`fmul`/`fadd`; the only vector-register instructions in the file are `movi v, #0` zeroings, not math. No NEON, no SME, no BLAS. GFLOP/s, median, quiet-ish machine (load average ~2.5):
+
+| n | ijk (dot product) | ikj (row-friendly) | ikj on 18 threads |
+|---|---|---|---|
+| 128 | 3.9 | 13.6 | 36 |
+| 256 | 3.3 | 12.2 | 95 |
+| 512 | 2.9 | 12.4 | 112 |
+| 1024 | 1.8 | 12.8 | 111 |
+| 2048 | skipped (minutes) | 13.3 | 166 |
+
+Single-core scalar peaks at ~13 GFLOP/s; loop order alone is a 4-7x difference at n>=512 (ijk walks B down a column). Three separate CPU layers exist and only the bottom one is measured here: scalar (this section), NEON SIMD (128-bit vector unit, the Apple analogue of SSE/AVX; measured below), and SME (the matrix engine, section 3b; ~2.7 TFLOP/s, about 200x one scalar core, 16x the 18-thread scalar loop at n=2048).
+
+### NEON rung (`make neon`, `bench/bench_neon.cpp`)
+
+Hand-written intrinsics (`vfmaq_f32`, 4 floats per instruction), F32, no SME, no BLAS. "neon ikj" is the scalar ikj loop vectorized by hand; "neon 4x16" holds a 4x16 tile of C in 16 vector registers (per k: 4 B loads, 4 A broadcasts, 16 fma) with K blocked by 256 so the B panel stays in L1; "x18" splits row blocks over 18 threads. Checked against a scalar reference (n<=1024) or against each other (n=2048). GFLOP/s, median, load average ~2.6:
+
+| n | neon ikj | neon 4x16 | 4x16 on 18 threads |
+|---|---|---|---|
+| 128 | 20 | 71 | 71 |
+| 256 | 24 | 84 | 361 |
+| 512 | 28 | 105 | 783 |
+| 1024 | 30 | 98 | 969 |
+| 2048 | 31 | 76 | 916 |
+
+One core: scalar 13 -> NEON ikj ~30 (2.3x) -> NEON register-blocked ~100 (8x scalar). All cores: ~0.9-1.0 TFLOP/s, about 6x the 18-thread scalar loop and about 35-40% of SME / Accelerate at large n (2.4-2.9 TFLOP/s). So hand-tuned NEON on every core gets roughly a third of the matrix engine; and SME gets there with far fewer cores (3-4 threads, section 3f). The 4x16 kernel drops at n=2048 (76 vs 105 at n=512): it does not block for L2/L3 (A and C are streamed from memory), so it is not fully tuned; treat ~100 GFLOP/s/core as a floor for NEON, not its ceiling.
 
 ## 4. Roadmap
 

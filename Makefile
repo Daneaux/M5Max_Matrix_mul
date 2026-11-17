@@ -6,7 +6,7 @@ SRC_CPP  := src/mx.cpp src/backend_ref.cpp src/backend_sme.cpp
 SRC_MM   := src/backend_gpu.mm src/backend_ane.mm
 OBJ      := $(patsubst src/%.cpp,build/%.o,$(SRC_CPP)) $(patsubst src/%.mm,build/%.o,$(SRC_MM))
 
-.PHONY: all test bench bandwidth ane-resident gpu-resident scaling clean
+.PHONY: all test bench bandwidth ane-resident gpu-resident scaling scalar scalar-asm neon clean
 all: build/libmx.a
 
 build/%.o: src/%.cpp src/backend.h include/mx/mx.h
@@ -35,6 +35,24 @@ build/bench_gpu_resident: bench/bench_gpu_resident.mm
 
 build/bench_scaling: bench/bench_scaling.mm build/libmx.a
 	$(CXX) $(CXXFLAGS) -x objective-c++ -fobjc-arc $< -x none build/libmx.a $(FRAMEWORKS) -o $@
+
+build/bench_scalar: bench/bench_scalar.cpp
+	$(CXX) $(CXXFLAGS) -fno-vectorize -fno-slp-vectorize $< -o $@
+
+scalar: build/bench_scalar
+	./build/bench_scalar
+# Shows the compiled inner loops: expect scalar fmadd/fmul/fadd on s registers and zero .4s/.2d vector ops.
+scalar-asm:
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -fno-vectorize -fno-slp-vectorize -S bench/bench_scalar.cpp -o build/bench_scalar.s
+	@echo "vector (.4s/.2s/.2d) instructions: $$(grep -cE '\.(4s|2s|2d)' build/bench_scalar.s)"
+	@grep -E 'fmadd|fmul|fadd' build/bench_scalar.s | awk '{print $$1}' | sort | uniq -c
+
+build/bench_neon: bench/bench_neon.cpp
+	$(CXX) $(CXXFLAGS) $< -o $@
+
+neon: build/bench_neon
+	./build/bench_neon
 
 build/prof_threadgroups: bench/prof_threadgroups.mm
 	$(CXX) $(CXXFLAGS) -x objective-c++ -fobjc-arc $< $(FRAMEWORKS) -o $@
